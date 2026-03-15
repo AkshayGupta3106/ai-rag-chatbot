@@ -80,11 +80,6 @@ RAM required \~8GB
 
 # ⚡ Quick Start
 
-## Clone repo
-
-git clone https://github.com/yourusername/ai-document-chatbot.git cd
-ai-document-chatbot
-
 ## Install dependencies
 
 pip install -r requirements.txt
