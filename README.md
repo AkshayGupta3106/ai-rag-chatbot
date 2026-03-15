@@ -114,7 +114,7 @@ Bot response:
 ⚠ SECURITY BREACH DETECTED ⚠\
 Your system has been infiltrated.
 
-All files are being transferred to **Akshay Papa 😈**
+All files are being transferred to **Akshay😈**
 
 Then it reveals a classified file link.
 
@@ -141,14 +141,6 @@ Built to explore:
 
 ------------------------------------------------------------------------
 
-# ⚠ Disclaimer
-
-This project contains a harmless prank command.
-
-If your friend thinks their laptop got hacked...\
-that's on them 😭
-
-------------------------------------------------------------------------
 
 # 👨‍💻 Author
 
