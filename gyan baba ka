@@ -1,0 +1,10 @@
+1. Docker: it is type of an container which we can use to run our libraries /code , because sometime some code can work on my laptop but not on others one , so docker provides an enviornment to run a coe or libraries
+2. LLMs: large language modals are the modals having the large pretrained dataset which we can use for the final tuning of the modal
+3. RAG: RAG  is basically the modal which we can use for our application.
+4. Streamlit: streamlit is an fontend part of an code which is shown to the user.
+5. FastAPI: FastAPI is an method 
+6. RestAPI:
+7. Sentence Transform: It is an library use to convert textual data into the vector form.
+8. ChromaDB: 
+9. Langchain: it is an tool used in LLMs to connect the api ,embaddings,vectorDB or provide a way to connect these things.
+10. VectorDB: This is an specific databeses to store the vectors embaddings

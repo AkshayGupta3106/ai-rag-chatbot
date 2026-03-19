@@ -1,8 +1,4 @@
 # chat_ui.py
-"""
-Streamlit chat UI for AI Document Chatbot
-"""
-
 import io
 import json
 import datetime
@@ -23,9 +19,44 @@ st.set_page_config(
 )
 
 # -------------------------
-# Helper functions
+# CSS (🔥 sexy UI)
 # -------------------------
-def safe_json(resp: requests.Response):
+st.markdown("""
+<style>
+.main {
+    background: linear-gradient(180deg, #0f172a, #020617);
+    color: #e2e8f0;
+}
+
+.chat-bubble-user {
+    background: linear-gradient(135deg, #0ea5a4, #0891b2);
+    padding: 10px 14px;
+    border-radius: 14px;
+    color: white;
+    display: inline-block;
+    margin: 6px 0;
+}
+
+.chat-bubble-bot {
+    background: #1e293b;
+    padding: 10px 14px;
+    border-radius: 14px;
+    color: #e2e8f0;
+    display: inline-block;
+    margin: 6px 0;
+}
+
+.small-text {
+    font-size: 12px;
+    color: gray;
+}
+</style>
+""", unsafe_allow_html=True)
+
+# -------------------------
+# Helpers
+# -------------------------
+def safe_json(resp):
     try:
         return resp.json()
     except:
@@ -36,6 +67,20 @@ def make_file_tuple(uploaded_file):
     content = uploaded_file.getvalue()
     return (uploaded_file.name, io.BytesIO(content), "application/pdf")
 
+
+def render_message(role, content):
+    if role == "user":
+        st.markdown(f"""
+        <div style="text-align:right;">
+            <div class="chat-bubble-user">{content}</div>
+        </div>
+        """, unsafe_allow_html=True)
+    else:
+        st.markdown(f"""
+        <div style="text-align:left;">
+            <div class="chat-bubble-bot">{content}</div>
+        </div>
+        """, unsafe_allow_html=True)
 
 # -------------------------
 # Session state
@@ -52,23 +97,23 @@ if "uploaded_file_name" not in st.session_state:
 left_col, right_col = st.columns([1, 2])
 
 # =========================================================
-# LEFT COLUMN (UPLOAD)
+# LEFT COLUMN
 # =========================================================
 with left_col:
 
-    st.header("Upload PDF")
+    st.header("📂 Upload PDF")
 
-    uploaded_file = st.file_uploader("Upload your PDF", type=["pdf"])
+    uploaded_file = st.file_uploader("Choose a PDF", type=["pdf"])
 
     if uploaded_file:
-        st.write("Selected:", uploaded_file.name)
+        st.success(f"Selected: {uploaded_file.name}")
 
-    if st.button("Upload & Index", disabled=uploaded_file is None):
+    if st.button("🚀 Upload & Index", disabled=uploaded_file is None):
 
         try:
             files = {"file": make_file_tuple(uploaded_file)}
 
-            with st.spinner("Uploading..."):
+            with st.spinner("⚡ Processing document..."):
 
                 resp = requests.post(
                     f"{API_URL}/upload-pdf",
@@ -77,7 +122,7 @@ with left_col:
                 )
 
             if resp.ok:
-                st.success("PDF processed successfully!")
+                st.success("✅ PDF processed successfully!")
                 st.session_state.uploaded_file_name = uploaded_file.name
             else:
                 st.error(f"Upload failed: {resp.status_code}")
@@ -88,20 +133,22 @@ with left_col:
             st.exception(e)
 
 # =========================================================
-# RIGHT COLUMN (CHAT)
+# RIGHT COLUMN
 # =========================================================
 with right_col:
 
-    st.header("Chat with your document")
+    st.header("💬 Chat with your document")
 
     if st.session_state.uploaded_file_name:
-        st.info(f"Loaded: {st.session_state.uploaded_file_name}")
+        st.info(f"📄 Loaded: {st.session_state.uploaded_file_name}")
 
-    # Display chat history
+    # -------------------------
+    # Chat history
+    # -------------------------
     for msg in st.session_state.messages:
 
         if msg["role"] == "user":
-            st.chat_message("user").write(msg["content"])
+            render_message("user", msg["content"])
 
         else:
             if isinstance(msg["content"], dict):
@@ -110,18 +157,18 @@ with right_col:
                 file_url = msg["content"].get("file_url")
                 sources = msg["content"].get("sources", [])
 
-                st.chat_message("assistant").write(answer)
+                render_message("assistant", answer)
 
                 if file_url:
-                    st.markdown(f"[Open document]({file_url})")
+                    st.markdown(f"[📂 Open document]({file_url})")
 
                 if sources:
-                    with st.expander("Sources"):
+                    with st.expander("📚 Sources"):
                         for s in sources:
-                            st.write("-", s)
+                            st.write("•", s)
 
             else:
-                st.chat_message("assistant").write(msg["content"])
+                render_message("assistant", msg["content"])
 
     # -------------------------
     # Chat input
@@ -134,51 +181,49 @@ with right_col:
             {"role": "user", "content": question}
         )
 
-        try:
+        with st.spinner("🤖 Thinking..."):
 
-            resp = requests.get(
-                f"{API_URL}/ask",
-                params={"question": question},
-                timeout=30
-            )
+            try:
 
-            if resp.ok:
-
-                data = safe_json(resp)
-
-                if isinstance(data, dict):
-                    assistant_msg = data
-                else:
-                    assistant_msg = str(data)
-
-                st.session_state.messages.append(
-                    {"role": "assistant", "content": assistant_msg}
+                resp = requests.get(
+                    f"{API_URL}/ask",
+                    params={"question": question},
+                    timeout=30
                 )
 
-            else:
+                if resp.ok:
+
+                    data = safe_json(resp)
+
+                    if isinstance(data, dict):
+                        assistant_msg = data
+                    else:
+                        assistant_msg = str(data)
+
+                    st.session_state.messages.append(
+                        {"role": "assistant", "content": assistant_msg}
+                    )
+
+                else:
+                    st.session_state.messages.append(
+                        {
+                            "role": "assistant",
+                            "content": f"Server error {resp.status_code}"
+                        }
+                    )
+
+            except Exception:
                 st.session_state.messages.append(
                     {
                         "role": "assistant",
-                        "content": f"Server error {resp.status_code}"
+                        "content": "❌ Backend connection error"
                     }
                 )
 
-        except Exception as e:
-
-            st.session_state.messages.append(
-                {
-                    "role": "assistant",
-                    "content": "Backend connection error"
-                }
-            )
-
         st.rerun()
 
-
-# =========================================================
+# -------------------------
 # Footer
-# =========================================================
+# -------------------------
 st.markdown("---")
-st.caption(
-    "Tip: Make sure FastAPI backend is running at http://127.0.0.1:8000"
-)
+st.caption("⚡ Hybrid RAG Chatbot | Groq + Ollama | Built by Akshay 😤")

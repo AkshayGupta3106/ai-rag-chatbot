@@ -76,7 +76,6 @@ def ask(question: str):
     # -------------------------
     # Prank command
     # -------------------------
-
     if "tell me about myself" in q:
 
         return {
@@ -110,41 +109,133 @@ All data transferred to:
 
         context, sources = ask_pdf(question)
 
-        # If PDF context exists → use RAG
-        if context.strip():
+        # -------------------------
+        # DEBUG
+        # -------------------------
+        print("\n----- CONTEXT -----")
+        print(context[:500])
+        print("-------------------\n")
 
-            prompt = f"""
-Answer the question using the context below.
+        # -------------------------
+        # Build prompt
+        # -------------------------
+        prompt = f"""
+# MISSION
+You are a High-Precision Document Intelligence Engine.
 
-Context:
+Your task is to answer questions using ONLY the provided CONTEXT.
+
+# CORE RULES
+1. Use ONLY the provided context.
+2. You MAY rephrase, summarize, and explain the context clearly.
+3. If the answer is partially available, answer using available information.
+4. If the answer is completely missing, say EXACTLY:
+   "I could not find this information in the document."
+5. Do NOT hallucinate or invent facts.
+6. If the user uses words like "slide", "image", "file", interpret them as referring to the document content.
+7. For broad questions (e.g., "what is in the document"), provide a structured summary.
+
+# ANSWERING BEHAVIOR
+- Be clear, direct, and useful.
+- Do NOT be overly strict.
+- Combine multiple context chunks if needed.
+- Answer even if wording is slightly different but meaning matches.
+
+# RESPONSE FORMAT
+Direct Answer:
+<1–2 line answer>
+
+Short Explanation:
+<clear explanation>
+
+Key Points:
+- point 1
+- point 2
+- point 3
+
+# CONTEXT
 {context}
 
-Question:
+# QUESTION
 {question}
+
+# ANSWER
 """
 
-        else:
-            # Normal LLM chat
-            prompt = question
+        # -------------------------
+        # 1️⃣ TRY GROQ FIRST ⚡
+        # -------------------------
+        try:
 
-        OLLAMA_PATH = r"C:\Users\aksha\AppData\Local\Programs\Ollama\ollama.exe"
+            API_KEY = os.environ.get("GROQ_API_KEY", "").strip()
 
-        result = subprocess.run(
-            [OLLAMA_PATH, "run", "llama3", prompt],
-            capture_output=True,
-            text=True,
-            encoding="utf-8"
-        )
+            if not API_KEY:
+                raise ValueError("No Groq API key found!")
 
-        answer = result.stdout.strip()
+            api_resp = requests.post(
+                "https://api.groq.com/openai/v1/chat/completions",
+                headers={
+                    "Authorization": f"Bearer {API_KEY}",
+                    "Content-Type": "application/json"
+                },
+                json={
+                    "model": "llama-3.1-8b-instant",
+                    "messages": [{"role": "user", "content": prompt}],
+                },
+                timeout=20
+            )
 
-        if not answer:
-            answer = "⚠️ Ollama returned empty response."
+            if api_resp.ok:
+                answer = api_resp.json()["choices"][0]["message"]["content"].strip()
 
-        return {
-            "answer": answer,
-            "sources": sources
-        }
+                return {
+                    "answer": f"⚡ Groq:\n\n{answer}",
+                    "sources": sources
+                }
+
+            else:
+                raise Exception(api_resp.text)
+
+        # -------------------------
+        # 2️⃣ FALLBACK TO OLLAMA 🧠
+        # -------------------------
+        except Exception as groq_error:
+
+            print("⚠ Groq failed → switching to Ollama:", groq_error)
+
+            try:
+                response = requests.post(
+                    "http://localhost:11434/api/generate",
+                    json={
+                        "model": "llama3",
+                        "prompt": prompt,
+                        "stream": False
+                    },
+                    timeout=60
+                )
+
+                if response.ok:
+                    data = response.json()
+                    answer = data.get("response", "").strip()
+                else:
+                    answer = "⚠️ Ollama API failed."
+
+                if not answer:
+                    answer = "⚠️ Ollama returned empty response."
+
+                return {
+                    "answer": f"🧠 Ollama (fallback):\n\n{answer}",
+                    "sources": sources
+                }
+
+            except Exception as ollama_error:
+
+                print("❌ Ollama also failed:", ollama_error)
+
+                return {
+                    "answer": "❌ Both Groq and Ollama failed.",
+                    "sources": []
+                }
 
     except Exception as e:
 
