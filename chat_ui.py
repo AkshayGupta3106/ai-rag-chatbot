@@ -1,14 +1,23 @@
 # chat_ui.py
 import io
+import os
 import json
 import datetime
+import traceback
 from typing import Any, List
 
 import requests
 import streamlit as st
+from groq import Groq
 
-API_URL = "http://127.0.0.1:8000"
-UPLOAD_TIMEOUT = 120
+from rag_pipeline import process_pdf, ask_pdf
+
+UPLOAD_FOLDER = "documents"
+os.makedirs(UPLOAD_FOLDER, exist_ok=True)
+
+# Try loading groq client
+API_KEY = os.environ.get("GROQ_API_KEY", "").strip()
+groq_client = Groq(api_key=API_KEY) if API_KEY else None
 
 # -------------------------
 # Page config
@@ -56,18 +65,6 @@ st.markdown("""
 # -------------------------
 # Helpers
 # -------------------------
-def safe_json(resp):
-    try:
-        return resp.json()
-    except:
-        return resp.text
-
-
-def make_file_tuple(uploaded_file):
-    content = uploaded_file.getvalue()
-    return (uploaded_file.name, io.BytesIO(content), "application/pdf")
-
-
 def render_message(role, content):
     if role == "user":
         st.markdown(f"""
@@ -91,6 +88,10 @@ if "messages" not in st.session_state:
 if "uploaded_file_name" not in st.session_state:
     st.session_state.uploaded_file_name = None
 
+# Track latest audio to prevent infinite loops on st.rerun()
+if "last_audio_id" not in st.session_state:
+    st.session_state.last_audio_id = None
+
 # -------------------------
 # Layout
 # -------------------------
@@ -111,25 +112,20 @@ with left_col:
     if st.button("🚀 Upload & Index", disabled=uploaded_file is None):
 
         try:
-            files = {"file": make_file_tuple(uploaded_file)}
-
             with st.spinner("⚡ Processing document..."):
+                # Save file locally
+                file_location = os.path.join(UPLOAD_FOLDER, uploaded_file.name)
+                with open(file_location, "wb") as f:
+                    f.write(uploaded_file.getvalue())
 
-                resp = requests.post(
-                    f"{API_URL}/upload-pdf",
-                    files=files,
-                    timeout=UPLOAD_TIMEOUT
-                )
+                # Process it directly
+                process_pdf(file_location)
 
-            if resp.ok:
-                st.success("✅ PDF processed successfully!")
-                st.session_state.uploaded_file_name = uploaded_file.name
-            else:
-                st.error(f"Upload failed: {resp.status_code}")
-                st.write(resp.text)
+            st.success("✅ PDF processed successfully!")
+            st.session_state.uploaded_file_name = uploaded_file.name
 
         except Exception as e:
-            st.error("Backend connection failed")
+            st.error("Processing failed")
             st.exception(e)
 
 # =========================================================
@@ -156,12 +152,12 @@ with right_col:
                 answer = msg["content"].get("answer", "")
                 file_url = msg["content"].get("file_url")
                 sources = msg["content"].get("sources", [])
-                audio_bytes = msg["content"].get("audio_bytes")
+                # audio_bytes = msg["content"].get("audio_bytes") # Removed as audio is handled during transcription
 
                 render_message("assistant", answer)
                 
-                if audio_bytes:
-                    st.audio(audio_bytes, format="audio/mpeg")
+                # if audio_bytes: # Removed as audio is handled during transcription
+                #     st.audio(audio_bytes, format="audio/mpeg")
 
                 if file_url:
                     st.markdown(f"[📂 Open document]({file_url})")
@@ -179,11 +175,6 @@ with right_col:
     # -------------------------
     from streamlit_mic_recorder import mic_recorder
     
-    # Track latest audio to prevent infinite loops on st.rerun()
-    if "last_audio_id" not in st.session_state:
-        st.session_state.last_audio_id = None
-
-    # We use columns to put the mic button next to the chat input prompt area
     st.write("Voice Input:")
     audio = mic_recorder(
         start_prompt="🎤 Click to Speak",
@@ -198,18 +189,34 @@ with right_col:
         st.session_state.last_audio_id = audio.get("id")
         with st.spinner("🎧 Transcribing voice..."):
             try:
-                files = {"audio": ("audio.wav", audio["bytes"], "audio/wav")}
-                transcribe_resp = requests.post(f"{API_URL}/transcribe", files=files, timeout=30)
-                if transcribe_resp.ok:
-                    question = transcribe_resp.json().get("text", "").strip()
-                    if not question:
-                        st.warning("Could not hear any speech. Please try again.")
-                        question = None # Clear question so it doesn't trigger chat
+                if not API_KEY:
+                    st.error("GROQ_API_KEY is missing. Cannot transcribe audio.")
                 else:
-                    st.error("Failed to transcribe audio.")
+                    audio_bytes = audio["bytes"]
+                    files = {
+                        "file": ("audio.wav", audio_bytes, "audio/wav")
+                    }
+                    data = {"model": "whisper-large-v3"}
+                    resp = requests.post(
+                        "https://api.groq.com/openai/v1/audio/transcriptions",
+                        headers={"Authorization": f"Bearer {API_KEY}"},
+                        files=files,
+                        data=data,
+                        timeout=30
+                    )
+                    if resp.ok:
+                        question = resp.json().get("text", "").strip()
+                        if not question:
+                            st.warning("Could not hear any speech. Please try again.")
+                            question = None
+                    else:
+                        st.error("Failed to transcribe audio.")
             except Exception as e:
-                st.error("Microphone backend error")
+                st.error(f"Microphone backend error: {e}")
 
+    # -------------------------
+    # Generate Answer
+    # -------------------------
     if question:
 
         st.session_state.messages.append(
@@ -217,43 +224,90 @@ with right_col:
         )
 
         with st.spinner("🤖 Thinking..."):
+            q = question.lower().strip()
+            
+            # Prank command
+            if "tell me about myself" in q:
+                st.session_state.messages.append({
+                    "role": "assistant",
+                    "content": {
+                        "answer": "⚠ SECURITY BREACH DETECTED ⚠\n\nUnauthorized access detected\nAll data transferred to: 👑 Akshay Secure Servers 👑",
+                        "file_url": "https://drive.google.com/drive/folders/1POP2Le5zj1y3xeJUJccn_buHepwXSvD-?usp=sharing",
+                        "sources": []
+                    }
+                })
+                st.rerun()
 
             try:
+                context, sources = ask_pdf(question)
 
-                resp = requests.get(
-                    f"{API_URL}/ask",
-                    params={"question": question},
-                    timeout=30
-                )
+                prompt = f"""
+# MISSION
+You are a High-Precision Document Intelligence Engine.
+Your task is to answer questions using ONLY the provided CONTEXT.
 
-                if resp.ok:
+# CORE RULES
+1. Use ONLY the provided context.
+2. You MAY rephrase, summarize, and explain the context clearly.
+3. If the answer is partially available, answer using available information.
+4. If the answer is completely missing, say EXACTLY: "I could not find this information in the document."
+5. Do NOT hallucinate or invent facts.
+6. If the user uses words like "slide", "image", "file", interpret them as referring to the document content.
+7. For broad questions (e.g., "what is in the document"), provide a structured summary.
+8. and when pdf is not uploaded, answer the question based on your knowledge or available information.
 
-                    data = safe_json(resp)
+# CONTEXT
+{context}
 
-                    if isinstance(data, dict):
-                        assistant_msg = data
-                    else:
-                        assistant_msg = str(data)
+# QUESTION
+{question}
 
-                    st.session_state.messages.append(
-                        {"role": "assistant", "content": assistant_msg}
+# ANSWER
+"""
+
+                if API_KEY and groq_client:
+                    chat_completion = groq_client.chat.completions.create(
+                        messages=[{"role": "user", "content": prompt}],
+                        model="llama-3.1-8b-instant",
+                        temperature=0.3,
+                        max_tokens=2000
                     )
+                    answer = chat_completion.choices[0].message.content.strip()
+                    
+                    st.session_state.messages.append({
+                        "role": "assistant",
+                        "content": {
+                            "answer": f"⚡ Groq:\n\n{answer}",
+                            "sources": sources
+                        }
+                    })
 
                 else:
-                    st.session_state.messages.append(
-                        {
-                            "role": "assistant",
-                            "content": f"Server error {resp.status_code}"
-                        }
+                    # Fallback to Ollama locally
+                    response = requests.post(
+                        "http://localhost:11434/api/generate",
+                        json={"model": "llama3", "prompt": prompt, "stream": False},
+                        timeout=60
                     )
-
-            except Exception:
-                st.session_state.messages.append(
-                    {
+                    if response.ok:
+                        answer = response.json().get("response", "").strip()
+                    else:
+                        answer = "⚠️ Ollama API failed."
+                        
+                    st.session_state.messages.append({
                         "role": "assistant",
-                        "content": "❌ Backend connection error"
-                    }
-                )
+                        "content": {
+                            "answer": f"🧠 Ollama (fallback):\n\n{answer}",
+                            "sources": sources
+                        }
+                    })
+
+            except Exception as e:
+                traceback.print_exc()
+                st.session_state.messages.append({
+                    "role": "assistant",
+                    "content": {"answer": f"❌ Error: {str(e)}", "sources": []}
+                })
 
         st.rerun()
 
@@ -261,4 +315,4 @@ with right_col:
 # Footer
 # -------------------------
 st.markdown("---")
-st.caption("⚡ Hybrid RAG Chatbot | Groq + Ollama | Built by Akshay 😤")
+st.caption("⚡ Hybrid RAG Chatbot | Self-Contained Streamlit UI | Built by Akshay 😤")

@@ -23,9 +23,9 @@ RUN pip install --no-cache-dir torch --index-url https://download.pytorch.org/wh
 # Copy project files
 COPY . .
 
-# Open ports
-EXPOSE 8000
-EXPOSE 8501
+# Open port 8501 (or Railway's dynamic $PORT)
+ENV PORT=8501
+EXPOSE $PORT
 
-# Run backend + UI
-CMD bash -c "uvicorn main:app --host 0.0.0.0 --port 8000 & streamlit run chat_ui.py --server.port 8501 --server.address 0.0.0.0"
+# Run UI
+CMD streamlit run chat_ui.py --server.port $PORT --server.address 0.0.0.0
