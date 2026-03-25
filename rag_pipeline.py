@@ -1,7 +1,16 @@
-from langchain_community.document_loaders import PyPDFLoader
+import os
+import shutil
+
+from langchain_core.documents import Document
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 from langchain_community.vectorstores import Chroma
 from langchain_community.embeddings import HuggingFaceEmbeddings
+
+from ocr_pipeline import pdf_to_text_via_ocr
+
+# Absolute path to DB — avoids CWD issues on Windows
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+DB_PATH = os.path.join(BASE_DIR, "db")
 
 # Load embeddings ONCE (important for speed)
 embeddings = HuggingFaceEmbeddings(
@@ -9,19 +18,36 @@ embeddings = HuggingFaceEmbeddings(
 )
 
 
+def load_pdf(file_path: str) -> list:
+    """Use Groq vision OCR to extract text, return LangChain Document objects."""
+    raw_pages = pdf_to_text_via_ocr(file_path)
+    return [
+        Document(
+            page_content=p["page_content"],
+            metadata=p["metadata"]
+        )
+        for p in raw_pages
+    ]
+
+
 def process_pdf(file_path):
-    import shutil
 
-    # 🔥 CLEAR OLD DB
-    if os.path.exists("./db"):
-        shutil.rmtree("./db")
+    # 🔥 CLEAR OLD DB — use delete_collection() to avoid Windows file-lock issues
+    if os.path.exists(DB_PATH):
+        try:
+            old_db = Chroma(persist_directory=DB_PATH, embedding_function=embeddings)
+            old_db.delete_collection()
+            del old_db
+        except Exception:
+            pass
+        shutil.rmtree(DB_PATH, ignore_errors=True)
 
-    loader = PyPDFLoader(file_path)
-    documents = loader.load()
+    # Load PDF via OCR pipeline
+    documents = load_pdf(file_path)
 
     text_splitter = RecursiveCharacterTextSplitter(
         chunk_size=1500,
-        chunk_overlap=500   
+        chunk_overlap=500
     )
 
     docs = text_splitter.split_documents(documents)
@@ -29,7 +55,7 @@ def process_pdf(file_path):
     db = Chroma.from_documents(
         docs,
         embeddings,
-        persist_directory="./db"
+        persist_directory=DB_PATH
     )
 
     return "PDF processed successfully"
@@ -38,7 +64,7 @@ def process_pdf(file_path):
 def ask_pdf(question):
 
     db = Chroma(
-        persist_directory="./db",
+        persist_directory=DB_PATH,
         embedding_function=embeddings
     )
 

@@ -9,3 +9,5 @@ chromadb
 pypdf
 python-multipart
 sentence-transformers
+pymupdf
+groq

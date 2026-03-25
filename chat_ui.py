@@ -156,8 +156,12 @@ with right_col:
                 answer = msg["content"].get("answer", "")
                 file_url = msg["content"].get("file_url")
                 sources = msg["content"].get("sources", [])
+                audio_bytes = msg["content"].get("audio_bytes")
 
                 render_message("assistant", answer)
+                
+                if audio_bytes:
+                    st.audio(audio_bytes, format="audio/mpeg")
 
                 if file_url:
                     st.markdown(f"[📂 Open document]({file_url})")
@@ -173,7 +177,38 @@ with right_col:
     # -------------------------
     # Chat input
     # -------------------------
-    question = st.chat_input("Ask something about the document...")
+    from streamlit_mic_recorder import mic_recorder
+    
+    # Track latest audio to prevent infinite loops on st.rerun()
+    if "last_audio_id" not in st.session_state:
+        st.session_state.last_audio_id = None
+
+    # We use columns to put the mic button next to the chat input prompt area
+    st.write("Voice Input:")
+    audio = mic_recorder(
+        start_prompt="🎤 Click to Speak",
+        stop_prompt="🛑 Stop Recording",
+        key="recorder"
+    )
+
+    question = st.chat_input("...or type something about the document")
+
+    # If voice was recorded and it's NEW audio
+    if audio and audio.get("id") != st.session_state.last_audio_id:
+        st.session_state.last_audio_id = audio.get("id")
+        with st.spinner("🎧 Transcribing voice..."):
+            try:
+                files = {"audio": ("audio.wav", audio["bytes"], "audio/wav")}
+                transcribe_resp = requests.post(f"{API_URL}/transcribe", files=files, timeout=30)
+                if transcribe_resp.ok:
+                    question = transcribe_resp.json().get("text", "").strip()
+                    if not question:
+                        st.warning("Could not hear any speech. Please try again.")
+                        question = None # Clear question so it doesn't trigger chat
+                else:
+                    st.error("Failed to transcribe audio.")
+            except Exception as e:
+                st.error("Microphone backend error")
 
     if question:
 

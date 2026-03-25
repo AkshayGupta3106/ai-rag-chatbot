@@ -68,6 +68,78 @@ async def upload_pdf(file: UploadFile = File(...)):
 # Chat endpoint
 # -------------------------
 
+import tempfile
+from fastapi.responses import FileResponse
+from gtts import gTTS
+
+@app.post("/transcribe")
+async def transcribe_audio(audio: UploadFile = File(...)):
+    """Transcribe audio to text using Groq's Whisper API."""
+    try:
+        API_KEY = os.environ.get("GROQ_API_KEY", "").strip()
+        if not API_KEY:
+            return {"error": "No Groq API key found!"}
+
+        # Read audio bytes
+        audio_bytes = await audio.read()
+        
+        # Send to Groq Whisper
+        files = {
+            "file": (audio.filename or "audio.wav", audio_bytes, audio.content_type or "audio/wav")
+        }
+        data = {
+            "model": "whisper-large-v3"
+        }
+        
+        resp = requests.post(
+            "https://api.groq.com/openai/v1/audio/transcriptions",
+            headers={"Authorization": f"Bearer {API_KEY}"},
+            files=files,
+            data=data,
+            timeout=30
+        )
+        
+        if resp.ok:
+            return {"text": resp.json().get("text", "")}
+        else:
+            return {"error": resp.text}
+            
+    except Exception as e:
+        traceback.print_exc()
+        return {"error": str(e)}
+
+@app.post("/tts")
+def text_to_speech(text: str):
+    """Convert text to speech audio using gTTS."""
+    try:
+        if not text:
+            return {"error": "Empty text provided"}
+            
+        # Create a temporary file to hold the MP3 data
+        temp_file = tempfile.NamedTemporaryFile(delete=False, suffix=".mp3")
+        temp_file.close()  # Close so gTTS can write to it
+        
+        # Strip out emojis and UI emojis before speaking
+        clean_text = text.replace("⚡ Groq:", "").replace("🧠 Ollama (fallback):", "").strip()
+        
+        # Generate speech
+        tts = gTTS(text=clean_text, lang="en", slow=False)
+        tts.save(temp_file.name)
+        
+        return FileResponse(
+            temp_file.name, 
+            media_type="audio/mpeg", 
+            filename="response.mp3"
+        )
+        
+    except Exception as e:
+        traceback.print_exc()
+        return {"error": str(e)}
+
+# -------------------------
+# Chat endpoint
+# -------------------------
+
 @app.get("/ask")
 def ask(question: str):
 
@@ -134,6 +206,7 @@ Your task is to answer questions using ONLY the provided CONTEXT.
 5. Do NOT hallucinate or invent facts.
 6. If the user uses words like "slide", "image", "file", interpret them as referring to the document content.
 7. For broad questions (e.g., "what is in the document"), provide a structured summary.
+8. and when pdf is not uploaded, answer the question based on your knowledge or available information.
 
 # ANSWERING BEHAVIOR
 - Be clear, direct, and useful.
@@ -179,7 +252,7 @@ Key Points:
                     "Content-Type": "application/json"
                 },
                 json={
-                    "model": "llama-3.1-8b-instant",
+                    "model": "meta-llama/llama-4-scout-17b-16e-instruct",
                     "messages": [{"role": "user", "content": prompt}],
                 },
                 timeout=20
