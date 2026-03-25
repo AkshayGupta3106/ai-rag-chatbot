@@ -11,3 +11,4 @@ python-multipart
 sentence-transformers
 pymupdf
 groq
+streamlit-mic-recorder
